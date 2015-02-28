@@ -3,6 +3,9 @@ import sys
 import subprocess
 import glob
 import gtk
+#~ from gtk import gdk
+#~ import cairo
+import gobject
 
 def sendnotification(message):
     subprocess.Popen(['notify-send', message])
@@ -21,7 +24,7 @@ def add_watch(path, callback):
             return True
         gobject.io_add_watch(fd, gobject.IO_IN, handle_watch)
     except Exception as ex:
-        print("exception while creating watch: %s" % str(ex))
+        sendnotification("exception while creating watch: %s" % str(ex))
 
 class GovernorTrayiconApp:
     def __init__(self):
@@ -44,11 +47,31 @@ class GovernorTrayiconApp:
         add_watch(self.governor_paths[0], cb)
 
         self.menu= self.make_menu()
-        self.tray = gtk.StatusIcon()
-        self.tray.set_from_stock(gtk.STOCK_ABOUT) 
-        self.update_icon()
+        self.tray= gtk.StatusIcon()
+        self.tray.set_visible(True)
         self.tray.connect('popup-menu', self.on_popup_menu)
         self.tray.connect('activate', self.on_activate)
+        
+        self.icon_freq= 0
+        self.update_icon()
+        def cb(): 
+            self.update_icon()
+            return True
+        gobject.timeout_add(1000, cb)
+    
+    def set_dynicon(self, text):
+        window= gtk.OffscreenWindow()
+        label= gtk.Label()
+        label.set_justify(gtk.JUSTIFY_CENTER)
+        label.set_markup(text)
+        eb= gtk.EventBox()
+        eb.add(label)
+        #~ eb.modify_bg(gtk.STATE_NORMAL, gtk.gdk.color_parse('green')) # xxxx no effect?
+        window.add(eb)
+        def draw_complete_event(window, event, statusIcon=self.tray):
+            statusIcon.set_from_pixbuf(window.get_pixbuf())
+        window.connect("damage-event", draw_complete_event)
+        window.show_all()
     
     def make_menu(self):
         menu= gtk.Menu()
@@ -78,19 +101,27 @@ class GovernorTrayiconApp:
         #~ self.show_menu(1, 0)
         pass
     
+    def get_max_freq(self):
+        max= 0
+        for path in glob.glob("/sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq"):
+            with open(path) as f:
+                khz= int(f.readline().strip())
+                if khz>max: max= khz
+        return max
+    
     def update_icon(self):
-        self.tray.set_from_stock(gtk.STOCK_EXECUTE)
+        maxfreq= self.get_max_freq()
+        if maxfreq != self.icon_freq:
+            self.set_dynicon("<small>%3.1f\nGhz</small>" % (float(self.get_max_freq())/1000000) )
+            self.icon_freq= maxfreq
         self.tray.set_tooltip("current governor: %s" % self.selected_governor)
     
     def activate_governor(self, governor):
         if self.selected_governor!=governor:
             print "selecting governor: %s" % governor
             self.selected_governor= governor
-            for f in self.governor_paths:
-                cmd= "sh -c 'echo %s > %s'" % (governor, f)
-                cmdstr= 'gksudo "%s"' % cmd
-                print "cmd string: %s" % cmdstr
-                subprocess.Popen(cmdstr, shell=True)
+            cmdstr= 'gksudo "bash -c \'echo %s | tee %s\'"' % (governor, ' '.join(self.governor_paths))
+            subprocess.Popen(cmdstr, shell=True)
             self.update_icon()
     
     def show_menu(self, event_button, event_time):
