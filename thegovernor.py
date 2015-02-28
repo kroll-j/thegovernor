@@ -1,10 +1,21 @@
 #!/usr/bin/python
+# thegovernor - Switch CPU governor from notification area
+# Copyright (C) 2015 Johannes Kroll
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
 import sys
 import subprocess
 import glob
 import gtk
-#~ from gtk import gdk
-#~ import cairo
 import gobject
 
 def sendnotification(message):
@@ -43,7 +54,7 @@ class GovernorTrayiconApp:
             if governor!=self.selected_governor:
                 self.governor_items[index].activate()
                 self.update_icon()
-                sendnotification("selected governor: %s" % self.selected_governor)
+                sendnotification("'%s' governor activated" % self.selected_governor)
         add_watch(self.governor_paths[0], cb)
 
         self.menu= self.make_menu()
@@ -114,7 +125,8 @@ class GovernorTrayiconApp:
         if maxfreq != self.icon_freq:
             self.set_dynicon("<small>%3.1f\nGhz</small>" % (float(self.get_max_freq())/1000000) )
             self.icon_freq= maxfreq
-        self.tray.set_tooltip("current governor: %s" % self.selected_governor)
+        self.tray.set_tooltip("active governor: %s\n%d cores @ %3.1f GHz max" % 
+            (self.selected_governor, len(self.governor_paths), float(maxfreq)/1000000))
     
     def activate_governor(self, governor):
         if self.selected_governor!=governor:
