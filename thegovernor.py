@@ -12,20 +12,45 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 
-import sys
+import os, sys
 import subprocess
 import glob
 import gtk
-import gobject
+import glib
+import json
+import time
 
 def sendnotification(message):
     subprocess.Popen(['notify-send', message])
+
+class Config:
+    def __init__(self, appname, defaults):
+        self.filename= os.path.join(glib.get_user_config_dir(), appname + ".json")
+        self.settings= defaults
+        try:
+            filesettings= json.load(open(self.filename))
+            for setting in filesettings:
+                self.settings[setting]= filesettings[setting]
+        except IOError:
+            pass
+    
+    def get(self, name):
+        if name in self.settings:
+            return self.settings[name]
+        return None
+    
+    def set(self, name, value):
+        self.settings[name]= value
+        self.sync()
+    
+    def sync(self):
+        json.dump(self.settings, open(self.filename, "w"))
+    
 
 def add_watch(path, callback):
     # create an inotify CLOSE_WRITE watch for path for use with gtk+ main loop
     try:
         import inotifyx
-        import gobject
         fd= inotifyx.init()
         wd= inotifyx.add_watch(fd, path, inotifyx.IN_CLOSE_WRITE)
         def handle_watch(source, condition):
@@ -33,14 +58,16 @@ def add_watch(path, callback):
             callback(path)
             sys.stdout.flush()
             return True
-        gobject.io_add_watch(fd, gobject.IO_IN, handle_watch)
+        glib.io_add_watch(fd, glib.IO_IN, handle_watch)
     except Exception as ex:
         sendnotification("exception while creating watch: %s" % str(ex))
 
 class GovernorTrayiconApp:
     def __init__(self):
+        self.icon_freq= 0
+        self.config= Config("thegovernor", { "enforce": False, "apply_at_startup": False } )
         self.governor_paths= glob.glob("/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor")
-        
+
         with open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors") as f:
             self.available_governors= f.readline().split()
         with open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor") as f:
@@ -50,26 +77,39 @@ class GovernorTrayiconApp:
         def cb(path):
             with open(path) as f:
                 governor= f.readline().strip()
-                index= self.available_governors.index(governor)
             if governor!=self.selected_governor:
-                self.governor_items[index].activate()
-                self.update_icon()
-                sendnotification("'%s' governor activated" % self.selected_governor)
+                time.sleep(0.25)
+                if self.config.get("enforce"):
+                    gov= self.selected_governor
+                    self.selected_governor= governor
+                    self.activate_governor(gov)
+                else:
+                    index= self.available_governors.index(governor)
+                    self.governor_items[index].activate()
+                    self.update_icon()
+                sendnotification("'%s' governor active" % self.selected_governor)
         add_watch(self.governor_paths[0], cb)
 
-        self.menu= self.make_menu()
         self.tray= gtk.StatusIcon()
         self.tray.set_visible(True)
         self.tray.connect('popup-menu', self.on_popup_menu)
         self.tray.connect('activate', self.on_activate)
-        
-        self.icon_freq= 0
+        self.menu= self.make_menu()
+
+        cfg_governor= self.config.get("governor")
+        if cfg_governor and cfg_governor!=self.selected_governor and self.config.get("apply_at_startup"):
+            try:
+                self.governor_items[self.available_governors.index(cfg_governor)].activate()
+                sendnotification("'%s' governor active" % self.selected_governor)
+            except Exception as ex:
+                print str(ex)
+    
         self.update_icon()
         def cb(): 
             self.update_icon()
             return True
-        gobject.timeout_add(1000, cb)
-    
+        glib.timeout_add(1000, cb)
+        
     def set_dynicon(self, text):
         window= gtk.OffscreenWindow()
         label= gtk.Label()
@@ -83,19 +123,37 @@ class GovernorTrayiconApp:
             statusIcon.set_from_pixbuf(window.get_pixbuf())
         window.connect("damage-event", draw_complete_event)
         window.show_all()
-    
+        
     def make_menu(self):
         menu= gtk.Menu()
         item= None
         self.governor_items= []
         for governor in self.available_governors:
             item= gtk.RadioMenuItem(item, governor)
-            item.connect('activate', lambda widget: self.activate_governor(widget.get_label()))
             if(governor == self.selected_governor):
                 item.activate()
+            item.connect('activate', lambda widget: self.activate_governor(widget.get_label()))
             item.show()
             menu.append(item)
             self.governor_items.append(item)
+        item= gtk.SeparatorMenuItem()
+        item.show()
+        menu.append(item)
+        
+        item= gtk.CheckMenuItem("Enforce")
+        item.set_tooltip_text("Enforce your choice when some other program (e.g. Power Manager) selects another governor.  Requires the python 'inotifyx' package.")
+        item.set_active(self.config.get("enforce"))
+        item.connect('activate', lambda widget: self.config.set("enforce", widget.get_active()))
+        item.show()
+        menu.append(item)
+        
+        item= gtk.CheckMenuItem("Apply at Startup")
+        item.set_tooltip_text("Apply your choice when app starts.")
+        item.set_active(self.config.get("apply_at_startup"))
+        item.connect('activate', lambda widget: self.config.set("apply_at_startup", widget.get_active()))
+        item.show()
+        menu.append(item)
+        
         item= gtk.SeparatorMenuItem()
         item.show()
         menu.append(item)
@@ -130,11 +188,12 @@ class GovernorTrayiconApp:
     
     def activate_governor(self, governor):
         if self.selected_governor!=governor:
-            print "selecting governor: %s" % governor
             self.selected_governor= governor
             cmdstr= 'gksudo "bash -c \'echo %s | tee %s\'"' % (governor, ' '.join(self.governor_paths))
             subprocess.Popen(cmdstr, shell=True)
             self.update_icon()
+        self.config.set("governor", governor)
+        self.config.sync()
     
     def show_menu(self, event_button, event_time):
         self.menu.popup(None, None, gtk.status_icon_position_menu,
