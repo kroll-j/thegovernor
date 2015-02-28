@@ -31,8 +31,8 @@ class Config:
             filesettings= json.load(open(self.filename))
             for setting in filesettings:
                 self.settings[setting]= filesettings[setting]
-        except IOError:
-            pass
+        except Exception as ex:
+            print("while loading %s: %s" % (self.filename, str(ex)))
     
     def get(self, name):
         if name in self.settings:
@@ -122,7 +122,22 @@ class GovernorTrayiconApp:
         def draw_complete_event(window, event, statusIcon=self.tray):
             statusIcon.set_from_pixbuf(window.get_pixbuf())
         window.connect("damage-event", draw_complete_event)
-        window.show_all()
+        window.show_all()#
+        
+    def set_autostart(self, value):
+        self.config.set("autostart", value)
+        autostartpath= os.path.join(glib.get_user_config_dir(), "autostart", "thegovernor.desktop")
+        scriptpath= os.path.join(os.path.abspath(os.path.dirname(sys.argv[0])), sys.argv[0])
+        entry= """[Desktop Entry]
+Encoding=UTF-8
+Version=0.9.4
+Type=Application
+Name=thegovernor
+Comment=
+Exec=python %s
+Hidden=%s\n""" % (scriptpath, "false" if value else "true")
+        with open(autostartpath, "w") as f:
+            f.write(entry)
         
     def make_menu(self):
         menu= gtk.Menu()
@@ -151,6 +166,13 @@ class GovernorTrayiconApp:
         item.set_tooltip_text("Apply your choice when app starts.")
         item.set_active(self.config.get("apply_at_startup"))
         item.connect('activate', lambda widget: self.config.set("apply_at_startup", widget.get_active()))
+        item.show()
+        menu.append(item)
+        
+        item= gtk.CheckMenuItem("Autostart")
+        #~ item.set_tooltip_text(".")
+        item.set_active(bool(self.config.get("autostart")))
+        item.connect('activate', lambda widget: self.set_autostart(widget.get_active()))
         item.show()
         menu.append(item)
         
