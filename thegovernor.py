@@ -66,7 +66,8 @@ class GovernorTrayiconApp:
     def __init__(self):
         self.icon_freq= 0
         self.config= Config("thegovernor", { "enforce": False, "apply_at_startup": False } )
-        self.governor_paths= glob.glob("/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor")
+        self.governor_globspec= "/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor"
+        self.governor_paths= glob.glob(self.governor_globspec)
 
         with open("/sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors") as f:
             self.available_governors= f.readline().split()
@@ -122,7 +123,7 @@ class GovernorTrayiconApp:
         def draw_complete_event(window, event, statusIcon=self.tray):
             statusIcon.set_from_pixbuf(window.get_pixbuf())
         window.connect("damage-event", draw_complete_event)
-        window.show_all()#
+        window.show_all()
         
     def set_autostart(self, value):
         self.config.set("autostart", value)
@@ -211,7 +212,7 @@ Hidden=%s\n""" % (scriptpath, "false" if value else "true")
     def activate_governor(self, governor):
         if self.selected_governor!=governor:
             self.selected_governor= governor
-            cmdstr= 'gksudo "bash -c \'echo %s | tee %s\'"' % (governor, ' '.join(self.governor_paths))
+            cmdstr= 'gksudo "bash -c \'echo %s | tee %s\'"' % (governor, self.governor_globspec)
             subprocess.Popen(cmdstr, shell=True)
             self.update_icon()
         self.config.set("governor", governor)
@@ -220,7 +221,7 @@ Hidden=%s\n""" % (scriptpath, "false" if value else "true")
     def show_menu(self, event_button, event_time):
         self.menu.popup(None, None, gtk.status_icon_position_menu,
                    event_button, event_time, self.tray)
-        
+
 if __name__=='__main__':
     app= GovernorTrayiconApp()
     gtk.main()
